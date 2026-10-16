@@ -1,0 +1,98 @@
+name: build-pack
+
+# Builds one offline MBTiles pack for a region and publishes it (plus a
+# manifest.json) to the rolling `maps-latest` release. Trigger by hand.
+on:
+  workflow_dispatch:
+    inputs:
+      area:
+        description: 'Geofabrik extract path, e.g. africa/algeria'
+        required: true
+        default: 'africa/algeria'
+      pack_id:
+        description: 'Stable id used in the file name and manifest'
+        required: true
+        default: 'dz-alger'
+      pack_name:
+        description: 'Human name shown in the app'
+        required: true
+        default: 'Alger'
+      bounds:
+        description: 'west,south,east,north (blank = whole extract)'
+        required: false
+        default: '2.85,36.42,3.68,37.10'
+      max_zoom:
+        description: 'Zoom ceiling'
+        required: false
+        default: '14'
+
+permissions:
+  contents: write
+
+env:
+  PLANETILER_VERSION: v0.10.2
+  PLANETILER_SHA256: f310bd0413e2e4512b27f4046d418664e8e1d3bf31603c2a70e23de06c167e4d
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Fetch planetiler and the OSM extract
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          curl -sSfL -o planetiler.jar \
+            "https://github.com/onthegomap/planetiler/releases/download/$PLANETILER_VERSION/planetiler.jar"
+          echo "$PLANETILER_SHA256  planetiler.jar" | sha256sum -c -
+          AREA="${{ inputs.area }}"
+          curl -sSfL -o area.osm.pbf "https://download.geofabrik.de/$AREA-latest.osm.pbf"
+          echo "osm.pbf: $(stat -c %s area.osm.pbf) bytes"
+
+      - name: Build MBTiles
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          bounds='${{ inputs.bounds }}'
+          args=(--osm-path=area.osm.pbf --output='${{ inputs.pack_id }}.mbtiles'
+                --maxzoom='${{ inputs.max_zoom }}' --force --threads=4)
+          if [ -n "$bounds" ]; then args+=(--bounds="$bounds"); fi
+          java -Xmx8g -jar planetiler.jar "${args[@]}" 2>&1 | tail -40
+          ls -l '${{ inputs.pack_id }}.mbtiles'
+
+      - name: Write the manifest
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          ID='${{ inputs.pack_id }}'
+          NAME='${{ inputs.pack_name }}'
+          FILE="$ID.mbtiles"
+          SIZE=$(stat -c %s "$FILE")
+          SHA=$(sha256sum "$FILE" | awk '{print $1}')
+          URL="https://github.com/${{ github.repository }}/releases/download/maps-latest/$FILE"
+          printf '{"version":1,"packs":[{"id":"%s","name":"%s","kind":"map","url":"%s","sizeBytes":%s,"sha256":"%s"}]}\n' \
+            "$ID" "$NAME" "$URL" "$SIZE" "$SHA" > manifest.json
+          cat manifest.json
+
+      - name: Publish to the rolling release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          gh release create maps-latest --title "Map packs" \
+            --notes "Rolling offline map packs - every run replaces these files." || true
+          gh release upload maps-latest '${{ inputs.pack_id }}.mbtiles' manifest.json --clobber
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.pack_id }}-mbtiles
+          path: ${{ runner.temp }}/${{ inputs.pack_id }}.mbtiles
+          retention-days: 7
