@@ -67,18 +67,25 @@ jobs:
           java -Xmx8g -jar planetiler.jar "${args[@]}" 2>&1 | tail -40
           ls -l '${{ inputs.pack_id }}.pmtiles'
 
-      - name: Write the manifest
+      - name: Write the manifest (merge this pack into the catalogue)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP"
+          R="${{ github.repository }}"
           ID='${{ inputs.pack_id }}'
           NAME='${{ inputs.pack_name }}'
           FILE="$ID.pmtiles"
           SIZE=$(stat -c %s "$FILE")
           SHA=$(sha256sum "$FILE" | awk '{print $1}')
-          URL="https://github.com/${{ github.repository }}/releases/download/maps-latest/$FILE"
-          printf '{"version":1,"packs":[{"id":"%s","name":"%s","kind":"map","url":"%s","sizeBytes":%s,"sha256":"%s"}]}\n' \
-            "$ID" "$NAME" "$URL" "$SIZE" "$SHA" > manifest.json
+          URL="https://github.com/$R/releases/download/maps-latest/$FILE"
+          gh release download maps-latest --repo "$R" --pattern manifest.json --dir . --clobber >/dev/null 2>&1 || true
+          [ -s manifest.json ] || echo '{"version":1,"packs":[]}' > manifest.json
+          jq --arg id "$ID" --arg name "$NAME" --arg url "$URL" --argjson size "$SIZE" --arg sha "$SHA" \
+            '.packs = (((.packs // []) | map(select(.id != $id))) + [{"id":$id,"name":$name,"kind":"map","url":$url,"sizeBytes":$size,"sha256":$sha}]) | .version = 1' \
+            manifest.json > manifest.new.json
+          mv manifest.new.json manifest.json
           cat manifest.json
 
       - name: Publish to the rolling release
