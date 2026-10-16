@@ -61,11 +61,11 @@ jobs:
           set -euo pipefail
           cd "$RUNNER_TEMP"
           bounds='${{ inputs.bounds }}'
-          args=(--osm-path=area.osm.pbf --output='${{ inputs.pack_id }}.mbtiles'
+          args=(--osm-path=area.osm.pbf --output='${{ inputs.pack_id }}.pmtiles'
                 --maxzoom='${{ inputs.max_zoom }}' --force --threads=4 --download)
           if [ -n "$bounds" ]; then args+=(--bounds="$bounds"); fi
           java -Xmx8g -jar planetiler.jar "${args[@]}" 2>&1 | tail -40
-          ls -l '${{ inputs.pack_id }}.mbtiles'
+          ls -l '${{ inputs.pack_id }}.pmtiles'
 
       - name: Write the manifest
         run: |
@@ -73,7 +73,7 @@ jobs:
           cd "$RUNNER_TEMP"
           ID='${{ inputs.pack_id }}'
           NAME='${{ inputs.pack_name }}'
-          FILE="$ID.mbtiles"
+          FILE="$ID.pmtiles"
           SIZE=$(stat -c %s "$FILE")
           SHA=$(sha256sum "$FILE" | awk '{print $1}')
           URL="https://github.com/${{ github.repository }}/releases/download/maps-latest/$FILE"
@@ -90,10 +90,10 @@ jobs:
           R="${{ github.repository }}"
           gh release create maps-latest --repo "$R" --title "Map packs" \
             --notes "Rolling offline map packs - every run replaces these files." || true
-          gh release upload maps-latest --repo "$R" '${{ inputs.pack_id }}.mbtiles' manifest.json --clobber
+          gh release upload maps-latest --repo "$R" '${{ inputs.pack_id }}.pmtiles' manifest.json --clobber
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ inputs.pack_id }}-mbtiles
-          path: ${{ runner.temp }}/${{ inputs.pack_id }}.mbtiles
+          name: ${{ inputs.pack_id }}-pmtiles
+          path: ${{ runner.temp }}/${{ inputs.pack_id }}.pmtiles
           retention-days: 7
