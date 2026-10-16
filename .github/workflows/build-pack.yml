@@ -87,9 +87,10 @@ jobs:
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP"
-          gh release create maps-latest --title "Map packs" \
+          R="${{ github.repository }}"
+          gh release create maps-latest --repo "$R" --title "Map packs" \
             --notes "Rolling offline map packs - every run replaces these files." || true
-          gh release upload maps-latest '${{ inputs.pack_id }}.mbtiles' manifest.json --clobber
+          gh release upload maps-latest --repo "$R" '${{ inputs.pack_id }}.mbtiles' manifest.json --clobber
 
       - uses: actions/upload-artifact@v4
         with:
