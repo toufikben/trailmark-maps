@@ -62,7 +62,7 @@ jobs:
           cd "$RUNNER_TEMP"
           bounds='${{ inputs.bounds }}'
           args=(--osm-path=area.osm.pbf --output='${{ inputs.pack_id }}.mbtiles'
-                --maxzoom='${{ inputs.max_zoom }}' --force --threads=4)
+                --maxzoom='${{ inputs.max_zoom }}' --force --threads=4 --download)
           if [ -n "$bounds" ]; then args+=(--bounds="$bounds"); fi
           java -Xmx8g -jar planetiler.jar "${args[@]}" 2>&1 | tail -40
           ls -l '${{ inputs.pack_id }}.mbtiles'
