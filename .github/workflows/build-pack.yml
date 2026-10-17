@@ -20,11 +20,15 @@ on:
       bounds:
         description: 'west,south,east,north (blank = whole extract)'
         required: false
-        default: '2.85,36.42,3.68,37.10'
+        default: ''
       max_zoom:
         description: 'Zoom ceiling'
         required: false
         default: '14'
+      min_mb:
+        description: 'Reject the pack when the archive is smaller than this (MB). 0 disables the gate.'
+        required: false
+        default: '1'
 
 permissions:
   contents: write
@@ -68,8 +72,16 @@ jobs:
           args=(--osm-path=area.osm.pbf --output='${{ inputs.pack_id }}.pmtiles'
                 --maxzoom='${{ inputs.max_zoom }}' --force --threads=4 --download)
           if [ -n "$bounds" ]; then args+=(--bounds="$bounds"); fi
+          echo "planetiler args: ${args[*]}"
           java -Xmx8g -jar planetiler.jar "${args[@]}" 2>&1 | tail -40
-          ls -l '${{ inputs.pack_id }}.pmtiles'
+          SIZE=$(stat -c %s '${{ inputs.pack_id }}.pmtiles')
+          MIN_MB='${{ inputs.min_mb }}'
+          MIN=$((MIN_MB * 1024 * 1024))
+          echo "archive bytes: $SIZE (quality gate: ${MIN_MB}MB)"
+          if [ "$SIZE" -lt "$MIN" ]; then
+            echo "::error::Pack is $SIZE bytes, below the ${MIN_MB}MB gate. Check area/bounds; set min_mb=0 only for intentionally tiny areas."
+            exit 1
+          fi
 
       - name: Write the manifest (merge this pack into the catalogue)
         env:
@@ -86,8 +98,10 @@ jobs:
           URL="https://github.com/$R/releases/download/maps-latest/$FILE"
           gh release download maps-latest --repo "$R" --pattern manifest.json --dir . --clobber >/dev/null 2>&1 || true
           [ -s manifest.json ] || echo '{"version":1,"packs":[]}' > manifest.json
-          jq --arg id "$ID" --arg name "$NAME" --arg url "$URL" --argjson size "$SIZE" --arg sha "$SHA" \
-            '.packs = (((.packs // []) | map(select(.id != $id))) + [{"id":$id,"name":$name,"kind":"map","url":$url,"sizeBytes":$size,"sha256":$sha}]) | .version = 1' \
+          BOUNDS='${{ inputs.bounds }}'
+          jq --arg id "$ID" --arg name "$NAME" --arg url "$URL" --argjson size "$SIZE" \
+            --arg sha "$SHA" --arg bounds "$BOUNDS" \
+            '.packs = (((.packs // []) | map(select(.id != $id))) + [{"id":$id,"name":$name,"kind":"map","url":$url,"sizeBytes":$size,"sha256":$sha,"bounds":$bounds}]) | .version = 1' \
             manifest.json > manifest.new.json
           mv manifest.new.json manifest.json
           cat manifest.json
