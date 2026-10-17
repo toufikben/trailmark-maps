@@ -29,6 +29,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: maps-release
+  cancel-in-progress: false
+
 env:
   PLANETILER_VERSION: v0.10.2
   PLANETILER_SHA256: f310bd0413e2e4512b27f4046d418664e8e1d3bf31603c2a70e23de06c167e4d
