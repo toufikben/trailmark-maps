@@ -93,7 +93,7 @@ jobs:
           [ -s routing-manifest.json ] || echo '{"version":1,"packs":[]}' > routing-manifest.json
           jq --arg id "$ID" --arg name "$NAME" --arg url "$URL" --argjson size "$SIZE" \
             --arg sha "$SHA" \
-            '.packs = (((.packs // []) | map(select(.id != $id))) + [{"id":$id,"name":$name,"kind":"routing","url":$url,"sizeBytes":$size,"sha256":$sha,"profiles":["foot","bike"]}]) | .version = 1' \
+            '.packs = (((.packs // []) | map(select(.id != $id))) + [{"id":$id,"name":$name,"kind":"routing","url":$url,"sizeBytes":$size,"sha256":$sha,"profiles":["foot","bike"]}]) | .version = 1 | del(.regions)' \
             routing-manifest.json > routing-manifest.new.json
           mv routing-manifest.new.json routing-manifest.json
           cat routing-manifest.json
