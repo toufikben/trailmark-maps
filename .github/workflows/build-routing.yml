@@ -1,0 +1,116 @@
+name: build-routing
+
+# Builds a GraphHopper offline routing graph for one region and publishes it
+# (plus routing-manifest.json) to the rolling `routing-latest` release.
+# Trigger by hand. Companion of build-pack (map tiles).
+on:
+  workflow_dispatch:
+    inputs:
+      area:
+        description: 'Geofabrik extract path, e.g. africa/algeria'
+        required: true
+        default: 'africa/algeria'
+      region_id:
+        description: 'Stable id used in the file name and manifest'
+        required: true
+        default: 'dz-alger'
+      region_name:
+        description: 'Human name shown in the app'
+        required: true
+        default: 'Alger'
+      min_mb:
+        description: 'Reject the graph zip when smaller than this (MB). 0 disables the gate.'
+        required: false
+        default: '1'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: routing-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Fetch the OSM extract
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          curl -sSfL -o area.osm.pbf "https://download.geofabrik.de/${{ inputs.area }}-latest.osm.pbf"
+          echo "osm.pbf: $(stat -c %s area.osm.pbf) bytes"
+
+      - name: Build the routing graph
+        env:
+          MAVEN_OPTS: -Xmx4g
+        run: |
+          set -euo pipefail
+          REGION='${{ inputs.region_id }}'
+          mvn -q -B -f routing/pom.xml compile exec:java \
+            -Dexec.mainClass=dev.trailmark.routing.RoutingImport \
+            -Dexec.cleanupDaemonThreads=false \
+            -Dexec.args="$RUNNER_TEMP/area.osm.pbf $RUNNER_TEMP/$REGION-gh"
+          du -sh "$RUNNER_TEMP/$REGION-gh"
+
+      - name: Package and gate
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          REGION='${{ inputs.region_id }}'
+          zip -r -q "$REGION-routing.zip" "$REGION-gh"
+          SIZE=$(stat -c %s "$REGION-routing.zip")
+          MIN_MB='${{ inputs.min_mb }}'
+          MIN=$((MIN_MB * 1024 * 1024))
+          echo "archive bytes: $SIZE (quality gate: ${MIN_MB}MB)"
+          if [ "$SIZE" -lt "$MIN" ]; then
+            echo "::error::Routing graph is $SIZE bytes, below the ${MIN_MB}MB gate."
+            exit 1
+          fi
+
+      - name: Write the manifest (merge this graph into the catalogue)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          R="${{ github.repository }}"
+          ID='${{ inputs.region_id }}'
+          NAME='${{ inputs.region_name }}'
+          FILE="$ID-routing.zip"
+          SIZE=$(stat -c %s "$FILE")
+          SHA=$(sha256sum "$FILE" | awk '{print $1}')
+          URL="https://github.com/$R/releases/download/routing-latest/$FILE"
+          gh release download routing-latest --repo "$R" --pattern routing-manifest.json --dir . --clobber >/dev/null 2>&1 || true
+          [ -s routing-manifest.json ] || echo '{"version":1,"regions":[]}' > routing-manifest.json
+          jq --arg id "$ID" --arg name "$NAME" --arg url "$URL" --argjson size "$SIZE" \
+            --arg sha "$SHA" \
+            '.regions = (((.regions // []) | map(select(.id != $id))) + [{"id":$id,"name":$name,"kind":"routing","url":$url,"sizeBytes":$size,"sha256":$sha,"profiles":["foot","bike"]}]) | .version = 1' \
+            routing-manifest.json > routing-manifest.new.json
+          mv routing-manifest.new.json routing-manifest.json
+          cat routing-manifest.json
+
+      - name: Publish to the rolling release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          R="${{ github.repository }}"
+          gh release create routing-latest --repo "$R" --title "Offline routing graphs" \
+            --notes "Rolling GraphHopper routing graphs - every run replaces these files." || true
+          gh release upload routing-latest --repo "$R" '${{ inputs.region_id }}-routing.zip' routing-manifest.json --clobber
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.region_id }}-routing
+          path: ${{ runner.temp }}/${{ inputs.region_id }}-routing.zip
+          retention-days: 7
