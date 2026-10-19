@@ -90,10 +90,10 @@ jobs:
           SHA=$(sha256sum "$FILE" | awk '{print $1}')
           URL="https://github.com/$R/releases/download/routing-latest/$FILE"
           gh release download routing-latest --repo "$R" --pattern routing-manifest.json --dir . --clobber >/dev/null 2>&1 || true
-          [ -s routing-manifest.json ] || echo '{"version":1,"regions":[]}' > routing-manifest.json
+          [ -s routing-manifest.json ] || echo '{"version":1,"packs":[]}' > routing-manifest.json
           jq --arg id "$ID" --arg name "$NAME" --arg url "$URL" --argjson size "$SIZE" \
             --arg sha "$SHA" \
-            '.regions = (((.regions // []) | map(select(.id != $id))) + [{"id":$id,"name":$name,"kind":"routing","url":$url,"sizeBytes":$size,"sha256":$sha,"profiles":["foot","bike"]}]) | .version = 1' \
+            '.packs = (((.packs // []) | map(select(.id != $id))) + [{"id":$id,"name":$name,"kind":"routing","url":$url,"sizeBytes":$size,"sha256":$sha,"profiles":["foot","bike"]}]) | .version = 1' \
             routing-manifest.json > routing-manifest.new.json
           mv routing-manifest.new.json routing-manifest.json
           cat routing-manifest.json
